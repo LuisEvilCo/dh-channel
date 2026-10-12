@@ -1,0 +1,62 @@
+name: Publish
+
+# Publishes the crate to crates.io when a version tag is pushed. The tag must
+# match Cargo.toml, e.g. tag v0.2.0 for version 0.2.0.
+#
+#   cargo set-version 0.2.0   # or edit Cargo.toml; commit
+#   git tag v0.2.0 && git push --follow-tags
+#
+# Authentication is crates.io trusted publishing: the job exchanges its GitHub
+# OIDC identity for a short-lived crates.io token, so no secret is stored.
+# Configure it once on the crate's Settings page on crates.io (repository
+# owner LuisEvilCo, repository dh-channel, workflow file publish.yml). That
+# page only exists after the first version was published by hand.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: publish to crates.io
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check that the tag matches Cargo.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+      - name: Format check
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-features --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --all-features
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

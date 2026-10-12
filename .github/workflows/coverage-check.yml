@@ -1,0 +1,188 @@
+name: Coverage check
+
+# Measures test coverage with cargo-llvm-cov and compares every pull request
+# against the latest run on main.
+#
+# Advisory by default: the job always passes and reports the delta as a
+# warning annotation, a step summary and a PR comment. To make a drop fail
+# the check, set the repository variable COVERAGE_ENFORCE to "true"
+# (Settings > Secrets and variables > Actions > Variables). No code change
+# needed. COVERAGE_TOLERANCE (percentage points, default 0.1) is how far
+# lines coverage may fall before it counts as a drop.
+#
+# Runs on push to main only to publish the baseline artifact.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ENFORCE: ${{ vars.COVERAGE_ENFORCE || 'false' }}
+  TOLERANCE: ${{ vars.COVERAGE_TOLERANCE || '0.1' }}
+  SUMMARY_FILE: coverage-summary.json
+  ARTIFACT_NAME: coverage-summary
+
+jobs:
+  coverage:
+    name: Coverage vs main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Measure coverage
+        run: cargo llvm-cov --locked --json --summary-only --output-path "$SUMMARY_FILE"
+
+      # On main this is the baseline the next pull requests compare against.
+      # On a pull request it is kept for inspection.
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.SUMMARY_FILE }}
+          retention-days: 90
+
+      - name: Download baseline from the latest main run
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          run_id=$(gh run list --workflow "${{ github.workflow }}" --branch main \
+            --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ]; then
+            echo "No successful run of this workflow on main yet; no baseline."
+            exit 0
+          fi
+          mkdir -p baseline
+          if gh run download "$run_id" -n "$ARTIFACT_NAME" -D baseline; then
+            echo "Baseline from run $run_id"
+          else
+            echo "Run $run_id has no $ARTIFACT_NAME artifact (expired?); no baseline."
+          fi
+
+      - name: Compare with main
+        if: github.event_name == 'pull_request'
+        id: compare
+        run: |
+          pct() { jq -r ".data[0].totals.$1.percent" "$2"; }
+          fmt() { awk -v v="$1" 'BEGIN { printf "%.2f", v }'; }
+          signed() { awk -v v="$1" 'BEGIN { printf "%+.2f", v }'; }
+
+          pr_lines=$(pct lines "$SUMMARY_FILE")
+          pr_regions=$(pct regions "$SUMMARY_FILE")
+          pr_functions=$(pct functions "$SUMMARY_FILE")
+
+          baseline="baseline/$SUMMARY_FILE"
+          {
+            echo "## Coverage vs main"
+            echo
+          } >> summary.md
+
+          if [ ! -f "$baseline" ]; then
+            status="no-baseline"
+            {
+              echo "No baseline from main yet. This pull request:"
+              echo
+              echo "| Metric | This PR |"
+              echo "|---|---|"
+              echo "| Lines | $(fmt "$pr_lines")% |"
+              echo "| Regions | $(fmt "$pr_regions")% |"
+              echo "| Functions | $(fmt "$pr_functions")% |"
+              echo
+              echo "The first run on main after this workflow merges publishes the baseline."
+            } >> summary.md
+          else
+            main_lines=$(pct lines "$baseline")
+            main_regions=$(pct regions "$baseline")
+            main_functions=$(pct functions "$baseline")
+
+            d_lines=$(awk -v a="$pr_lines" -v b="$main_lines" 'BEGIN { print a - b }')
+            d_regions=$(awk -v a="$pr_regions" -v b="$main_regions" 'BEGIN { print a - b }')
+            d_functions=$(awk -v a="$pr_functions" -v b="$main_functions" 'BEGIN { print a - b }')
+
+            if awk -v d="$d_lines" -v t="$TOLERANCE" 'BEGIN { exit !(d < -t) }'; then
+              status="dropped"
+            else
+              status="ok"
+            fi
+
+            {
+              echo "| Metric | main | This PR | Delta |"
+              echo "|---|---|---|---|"
+              echo "| Lines | $(fmt "$main_lines")% | $(fmt "$pr_lines")% | $(signed "$d_lines") |"
+              echo "| Regions | $(fmt "$main_regions")% | $(fmt "$pr_regions")% | $(signed "$d_regions") |"
+              echo "| Functions | $(fmt "$main_functions")% | $(fmt "$pr_functions")% | $(signed "$d_functions") |"
+              echo
+            } >> summary.md
+
+            case "$status" in
+              ok)
+                echo "Lines coverage is not below main (tolerance ${TOLERANCE} pts)." >> summary.md
+                ;;
+              dropped)
+                if [ "$ENFORCE" = "true" ]; then
+                  echo "**Lines coverage dropped by $(signed "$d_lines") pts, beyond the ${TOLERANCE} pt tolerance. This check is enforced.**" >> summary.md
+                else
+                  echo "**Lines coverage dropped by $(signed "$d_lines") pts, beyond the ${TOLERANCE} pt tolerance.** Advisory only; set repository variable \`COVERAGE_ENFORCE=true\` to fail the check." >> summary.md
+                fi
+                ;;
+            esac
+          fi
+
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          if [ "$status" = "dropped" ]; then
+            msg="Lines coverage $(fmt "$pr_lines")% is below main $(fmt "$main_lines")% by $(signed "$d_lines") pts"
+            if [ "$ENFORCE" = "true" ]; then
+              echo "::error::$msg"
+              exit 1
+            fi
+            echo "::warning::$msg (advisory)"
+          fi
+
+      # Keeps one comment per pull request, updated in place.
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request' && always() && steps.compare.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- coverage-check -->"
+          { echo "$marker"; cat summary.md; } > comment.md
+          existing=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$existing" -F body=@comment.md >/dev/null
+          else
+            gh pr comment "$PR" --body-file comment.md
+          fi
