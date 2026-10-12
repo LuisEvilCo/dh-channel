@@ -5,8 +5,8 @@ use dh_channel::key_manager::{FetchFuture, HttpKeyFetcher, KeyFetcher, KeyManage
 use dh_channel::keys::PublicKeys;
 use serde_json::json;
 use std::io::{Error, ErrorKind};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

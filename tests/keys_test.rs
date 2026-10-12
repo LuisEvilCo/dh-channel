@@ -1,6 +1,6 @@
 //! The `/keys` document and the pair behind it.
 
-use dh_channel::keys::{public_keys_reply, KeyPair, KeysError, PublicKeys};
+use dh_channel::keys::{KeyPair, KeysError, PublicKeys, public_keys_reply};
 use serde_json::json;
 use std::io::ErrorKind;
 

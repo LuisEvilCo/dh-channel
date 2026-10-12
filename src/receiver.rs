@@ -30,21 +30,21 @@
 //! ```
 
 use crate::envelope::{
-    is_fresh, is_valid_request_id, now_millis, open_payload, seal_payload, SealedEnvelope,
-    SERVICE_ID_HEADER,
+    SERVICE_ID_HEADER, SealedEnvelope, is_fresh, is_valid_request_id, now_millis, open_payload,
+    seal_payload,
 };
 use crate::key_manager::KeyManager;
 use crate::replay::ReplayStore;
-use axum::body::{to_bytes, Body};
+use axum::Json;
+use axum::body::{Body, to_bytes};
 use axum::extract::{FromRequestParts, Request, State};
-use axum::http::request::Parts;
 use axum::http::StatusCode;
+use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -213,7 +213,7 @@ pub async fn dh_auth(
             return reject(
                 StatusCode::UNAUTHORIZED,
                 "Sealed payload has an invalid requestId",
-            )
+            );
         }
     };
 
@@ -305,7 +305,7 @@ pub fn seal_response<T: Serialize>(ctx: &DhContext, body: &T) -> Response {
             return reject(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "sealed response body must be a JSON object",
-            )
+            );
         }
         Err(e) => return reject(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };

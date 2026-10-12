@@ -7,13 +7,13 @@
 //! function for callers that already hold the shared key.
 
 use crate::envelope::{
-    open_payload, seal_payload, SealedEnvelope, SealedPayload, SERVICE_ID_HEADER,
+    SERVICE_ID_HEADER, SealedEnvelope, SealedPayload, open_payload, seal_payload,
 };
 use crate::key_manager::KeyManager;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::StatusCode;
-use serde::de::DeserializeOwned;
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;

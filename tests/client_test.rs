@@ -3,11 +3,11 @@
 //! and the sender's public key, checks the fields, and answers with a sealed
 //! response.
 
-use dh_channel::client::{post_sealed, DhClient};
+use dh_channel::client::{DhClient, post_sealed};
 use dh_channel::crypto::{compute_shared_secret, generate_keypair_hex};
 use dh_channel::envelope::{
-    new_request_id, now_millis, open_payload, seal_payload, SealedEnvelope, SealedPayload,
-    SERVICE_ID_HEADER,
+    SERVICE_ID_HEADER, SealedEnvelope, SealedPayload, new_request_id, now_millis, open_payload,
+    seal_payload,
 };
 use dh_channel::key_manager::{KeyManager, Peer};
 use serde::{Deserialize, Serialize};

@@ -47,20 +47,20 @@ pub mod client;
 #[cfg(feature = "axum")]
 pub mod receiver;
 
-pub use crypto::{compute_shared_secret, open_message, seal_message, DhError};
+pub use crypto::{DhError, compute_shared_secret, open_message, seal_message};
 pub use envelope::{
-    new_request_id, now_millis, open_payload, seal_payload, SealedEnvelope, SealedPayload,
-    FRESHNESS_WINDOW_MS, SERVICE_ID_HEADER,
+    FRESHNESS_WINDOW_MS, SERVICE_ID_HEADER, SealedEnvelope, SealedPayload, new_request_id,
+    now_millis, open_payload, seal_payload,
 };
 pub use key_manager::{KeyFetcher, KeyManager, Peer};
-pub use keys::{public_keys_reply, KeyPair, KeysError, PublicKeys};
+pub use keys::{KeyPair, KeysError, PublicKeys, public_keys_reply};
 pub use replay::{InMemoryReplayStore, ReplayStore};
 
 #[cfg(feature = "client")]
-pub use client::{post_sealed, DhClient};
+pub use client::{DhClient, post_sealed};
 
 #[cfg(feature = "axum")]
-pub use receiver::{dh_auth, seal_response, DhContext, DhPayload, DhReceiver, DhSender};
+pub use receiver::{DhContext, DhPayload, DhReceiver, DhSender, dh_auth, seal_response};
 
 /// The libsodium precomputed shared key type, re-exported so callers do not
 /// need a direct dependency on `sodiumoxide`.

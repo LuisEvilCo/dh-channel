@@ -1,8 +1,8 @@
 [package]
 name = "dh-channel"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 description = "Sealed inter-service channel: static Diffie-Hellman over Ed25519 identities, libsodium crypto_box envelopes, an axum receiver and a reqwest client"
 repository = "https://github.com/LuisEvilCo/dh-channel"

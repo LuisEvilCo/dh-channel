@@ -2,8 +2,8 @@
 
 use dh_channel::crypto::{compute_shared_secret, generate_keypair_hex};
 use dh_channel::envelope::{
-    is_fresh, is_valid_request_id, new_request_id, now_millis, open_payload, seal_payload,
-    SealedEnvelope, SealedPayload, FRESHNESS_WINDOW_MS, SERVICE_ID_HEADER,
+    FRESHNESS_WINDOW_MS, SERVICE_ID_HEADER, SealedEnvelope, SealedPayload, is_fresh,
+    is_valid_request_id, new_request_id, now_millis, open_payload, seal_payload,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

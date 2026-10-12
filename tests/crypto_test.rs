@@ -2,8 +2,8 @@
 //! variant, and the wire format locked against libsodium-wrappers.
 
 use dh_channel::crypto::{
-    compute_shared_secret, generate_keypair_hex, open_message, seal_message, DhError, MAC_BYTES,
-    NONCE_BYTES,
+    DhError, MAC_BYTES, NONCE_BYTES, compute_shared_secret, generate_keypair_hex, open_message,
+    seal_message,
 };
 use sodiumoxide::crypto::box_;
 use std::io::ErrorKind;

@@ -1,6 +1,6 @@
 //! Replay protection: the key layout and the in-memory store.
 
-use dh_channel::replay::{replay_key, InMemoryReplayStore, ReplayStore, REPLAY_TTL_SECONDS};
+use dh_channel::replay::{InMemoryReplayStore, REPLAY_TTL_SECONDS, ReplayStore, replay_key};
 use std::time::Duration;
 
 #[test]

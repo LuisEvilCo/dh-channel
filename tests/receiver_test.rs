@@ -2,22 +2,22 @@
 //! driven through a router with tower's `oneshot`.
 
 use async_trait::async_trait;
-use axum::body::{to_bytes, Body};
+use axum::Router;
+use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::response::Response;
 use axum::routing::post;
-use axum::Router;
 use dh_channel::crypto::{compute_shared_secret, generate_keypair_hex};
 use dh_channel::envelope::{
-    new_request_id, now_millis, open_payload, seal_payload, SealedEnvelope, SERVICE_ID_HEADER,
+    SERVICE_ID_HEADER, SealedEnvelope, new_request_id, now_millis, open_payload, seal_payload,
 };
 use dh_channel::key_manager::{FetchFuture, KeyFetcher, KeyManager, Peer};
 use dh_channel::keys::PublicKeys;
-use dh_channel::receiver::{dh_auth, seal_response, DhContext, DhPayload, DhReceiver, DhSender};
+use dh_channel::receiver::{DhContext, DhPayload, DhReceiver, DhSender, dh_auth, seal_response};
 use dh_channel::replay::{InMemoryReplayStore, ReplayStore};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use std::io::Error;
 use std::sync::Arc;
