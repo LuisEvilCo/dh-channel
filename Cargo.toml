@@ -1,0 +1,37 @@
+[package]
+name = "dh-channel"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Sealed inter-service channel: static Diffie-Hellman over Ed25519 identities, libsodium crypto_box envelopes, an axum receiver and a reqwest client"
+repository = "https://github.com/LuisEvilCo/dh-channel"
+readme = "README.md"
+keywords = ["diffie-hellman", "libsodium", "axum", "sealed", "microservices"]
+categories = ["cryptography", "web-programming", "authentication"]
+
+[features]
+default = ["client", "axum"]
+# `DhClient` and `post_sealed`, built on reqwest.
+client = ["dep:reqwest"]
+# `dh_auth` middleware, `DhPayload` extractor and `seal_response`, built on axum.
+axum = ["dep:axum"]
+
+[dependencies]
+sodiumoxide = "0.2.7"
+hex = "0.4.3"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+tokio = { version = "1.38", features = ["sync"] }
+async-trait = "0.1"
+tracing = "0.1.40"
+reqwest = { version = "0.12", features = ["json"], optional = true }
+axum = { version = "0.8", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "time"] }
+tower = { version = "0.5", features = ["util"] }
+wiremock = "0.6"
+
+[package.metadata.docs.rs]
+all-features = true
