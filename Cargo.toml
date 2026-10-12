@@ -1,6 +1,6 @@
 [package]
 name = "dh-channel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -9,6 +9,8 @@ repository = "https://github.com/LuisEvilCo/dh-channel"
 readme = "README.md"
 keywords = ["diffie-hellman", "libsodium", "axum", "sealed", "microservices"]
 categories = ["cryptography", "web-programming", "authentication"]
+# Keep the published package to what consumers compile: no CI files or tests.
+exclude = [".github/", "tests/", "coverage/"]
 
 [features]
 default = ["client", "axum"]
