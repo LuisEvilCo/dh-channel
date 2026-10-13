@@ -4,8 +4,8 @@ Sealed inter-service channel for Rust services: static Diffie-Hellman over
 Ed25519 identities, libsodium `crypto_box` envelopes, an axum receiver and a
 reqwest client.
 
-Its TypeScript counterpart for NestJS services is `@tendril-llc/nest-dh-channel`.
-Both carry a fixture produced by the other, so the wire format cannot drift.
+A TypeScript counterpart exists; both carry a fixture produced by the other,
+so the wire format cannot drift.
 
 ## How it works
 
@@ -28,6 +28,16 @@ Wire format, byte for byte:
 shared   = crypto_box_beforenm(ed25519_pk_to_curve25519(peer_pk), ed25519_sk_to_curve25519(own_sk))
 envelope = hex( nonce[24] || crypto_box_easy_afternm(plaintext, nonce, shared) )
 ```
+
+### Key validation
+
+The X25519 step is libsodium's, checked in the test suite against the
+RFC 7748 section 5.2 and 6.1 vectors. A peer public key is rejected before
+any key is derived when it is the zero key, a low-order point or a
+non-canonical encoding: libsodium refuses those during Ed25519 to X25519
+conversion, and `compute_shared_secret` independently refuses an all-zero
+X25519 output as RFC 7748 section 6.1 recommends. The nine points libsodium
+blocklists are asserted rejected in `tests/crypto_test.rs`.
 
 ## Install
 
@@ -65,8 +75,8 @@ use dh_channel::{KeyManager, Peer};
 use std::sync::Arc;
 
 let keys = Arc::new(KeyManager::new(vec![
-    Peer::new("auth", &config.auth_url),          // scheme optional, /keys appended
-    Peer::new("contacts", &config.contacts_url),
+    Peer::new("foo", &config.foo_url),          // scheme optional, /keys appended
+    Peer::new("baz", &config.baz_url),
 ]));
 ```
 
@@ -86,9 +96,9 @@ impl SealedPayload for LoginRequest { fn request_id(&self) -> &str { &self.reque
 struct LoginResponse { #[serde(rename = "requestId")] request_id: String, #[serde(rename = "authToken")] auth_token: String }
 impl SealedPayload for LoginResponse { fn request_id(&self) -> &str { &self.request_id } }
 
-let client = DhClient::new("auth", config.ed25519_private_key_hex.clone(), keys.clone());
+let client = DhClient::new("foo", config.ed25519_private_key_hex.clone(), keys.clone());
 let response: LoginResponse = client
-    .post("edge", &format!("{}/auth/v2/internal/login-token", config.edge_url), &LoginRequest {
+    .post("bar", &format!("{}/internal/login-token", config.bar_url), &LoginRequest {
         ts: now_millis(),
         request_id: new_request_id(),
         email,
@@ -115,7 +125,7 @@ use std::sync::Arc;
 
 let receiver = Arc::new(
     DhReceiver::new(config.ed25519_private_key_hex.clone(), keys.clone(), Arc::new(InMemoryReplayStore::new()))
-        .allow(["auth"]), // optional: only these senders
+        .allow(["foo"]), // optional: only these senders
 );
 
 let app = Router::new().route(

@@ -86,41 +86,41 @@ impl ReplayStore for FailingReplay {
     }
 }
 
-/// Edge is the receiver; auth and contacts are registered senders.
+/// bar is the receiver; foo and baz are registered senders.
 struct Fixture {
     receiver: DhReceiver,
-    /// auth's view of the shared key with edge.
-    auth_shared: PrecomputedKey,
-    /// contacts' view of the shared key with edge.
-    contacts_shared: PrecomputedKey,
-    edge_sk: String,
+    /// foo's view of the shared key with bar.
+    foo_shared: PrecomputedKey,
+    /// baz' view of the shared key with bar.
+    baz_shared: PrecomputedKey,
+    bar_sk: String,
     keys: Arc<KeyManager>,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let (edge_pk, edge_sk) = generate_keypair_hex();
-        let (auth_pk, auth_sk) = generate_keypair_hex();
-        let (contacts_pk, contacts_sk) = generate_keypair_hex();
+        let (bar_pk, bar_sk) = generate_keypair_hex();
+        let (foo_pk, foo_sk) = generate_keypair_hex();
+        let (baz_pk, baz_sk) = generate_keypair_hex();
         let keys = Arc::new(KeyManager::with_fetcher(
             vec![
-                Peer::new("auth", "auth.internal"),
-                Peer::new("contacts", "contacts.internal"),
+                Peer::new("foo", "foo.internal"),
+                Peer::new("baz", "baz.internal"),
             ],
             Box::new(StaticKeys(vec![
-                ("auth".into(), auth_pk),
-                ("contacts".into(), contacts_pk),
+                ("foo".into(), foo_pk),
+                ("baz".into(), baz_pk),
             ])),
         ));
         Fixture {
             receiver: DhReceiver::new(
-                edge_sk.clone(),
+                bar_sk.clone(),
                 keys.clone(),
                 Arc::new(InMemoryReplayStore::new()),
             ),
-            auth_shared: compute_shared_secret(&auth_sk, &edge_pk).unwrap(),
-            contacts_shared: compute_shared_secret(&contacts_sk, &edge_pk).unwrap(),
-            edge_sk,
+            foo_shared: compute_shared_secret(&foo_sk, &bar_pk).unwrap(),
+            baz_shared: compute_shared_secret(&baz_sk, &bar_pk).unwrap(),
+            bar_sk,
             keys,
         }
     }
@@ -200,21 +200,21 @@ async fn expect_rejection(app: Router, request: Request<Body>, status: StatusCod
 #[tokio::test]
 async fn accepts_a_fresh_request_and_seals_the_reply_with_the_echoed_id() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let plaintext = payload();
     let app = fx.app();
 
     let response = app
-        .oneshot(sealed_request(ROUTE, "auth", &auth_shared, &plaintext))
+        .oneshot(sealed_request(ROUTE, "foo", &foo_shared, &plaintext))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     let envelope: SealedEnvelope = serde_json::from_value(body_json(response).await).unwrap();
-    let opened: Value = open_payload(&auth_shared, &envelope).unwrap();
+    let opened: Value = open_payload(&foo_shared, &envelope).unwrap();
     assert_eq!(opened["authToken"], "jwt-for-user@example.com");
     assert_eq!(opened["passwordLength"], 7);
-    assert_eq!(opened["sender"], "auth");
+    assert_eq!(opened["sender"], "foo");
     assert_eq!(opened["requestId"], plaintext["requestId"]);
     assert!(opened["ts"].as_i64().unwrap() > 0);
 }
@@ -222,47 +222,42 @@ async fn accepts_a_fresh_request_and_seals_the_reply_with_the_echoed_id() {
 #[tokio::test]
 async fn any_registered_peer_may_call_without_an_allow_list() {
     let fx = Fixture::new();
-    let contacts_shared = fx.contacts_shared.clone();
+    let baz_shared = fx.baz_shared.clone();
     let plaintext = payload();
     let response = fx
         .app()
-        .oneshot(sealed_request(
-            "/context",
-            "contacts",
-            &contacts_shared,
-            &plaintext,
-        ))
+        .oneshot(sealed_request("/context", "baz", &baz_shared, &plaintext))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let envelope: SealedEnvelope = serde_json::from_value(body_json(response).await).unwrap();
-    let opened: Value = open_payload(&contacts_shared, &envelope).unwrap();
+    let opened: Value = open_payload(&baz_shared, &envelope).unwrap();
     assert_eq!(opened["payload"]["email"], "user@example.com");
 }
 
 #[tokio::test]
 async fn an_allow_list_turns_other_peers_away_with_403() {
     let fx = Fixture::new();
-    let contacts_shared = fx.contacts_shared.clone();
-    let auth_shared = fx.auth_shared.clone();
+    let baz_shared = fx.baz_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let receiver = DhReceiver::new(
-        fx.edge_sk.clone(),
+        fx.bar_sk.clone(),
         fx.keys.clone(),
         Arc::new(InMemoryReplayStore::new()),
     )
-    .allow(["auth"]);
+    .allow(["foo"]);
     let app = Fixture::app_with(receiver);
 
     expect_rejection(
         app.clone(),
-        sealed_request(ROUTE, "contacts", &contacts_shared, &payload()),
+        sealed_request(ROUTE, "baz", &baz_shared, &payload()),
         StatusCode::FORBIDDEN,
-        "contacts may not call this route",
+        "baz may not call this route",
     )
     .await;
 
     let ok = app
-        .oneshot(sealed_request(ROUTE, "auth", &auth_shared, &payload()))
+        .oneshot(sealed_request(ROUTE, "foo", &foo_shared, &payload()))
         .await
         .unwrap();
     assert_eq!(ok.status(), StatusCode::OK);
@@ -307,7 +302,7 @@ async fn rejects_bodies_that_are_not_an_envelope() {
     ] {
         expect_rejection(
             app.clone(),
-            raw_request(ROUTE, Some("auth"), body),
+            raw_request(ROUTE, Some("foo"), body),
             StatusCode::BAD_REQUEST,
             "Body must be { sealed: <hex> }",
         )
@@ -318,11 +313,11 @@ async fn rejects_bodies_that_are_not_an_envelope() {
 #[tokio::test]
 async fn rejects_an_envelope_under_another_key() {
     let fx = Fixture::new();
-    // contacts' key, but claiming to be auth
-    let contacts_shared = fx.contacts_shared.clone();
+    // baz' key, but claiming to be foo
+    let baz_shared = fx.baz_shared.clone();
     expect_rejection(
         fx.app(),
-        sealed_request(ROUTE, "auth", &contacts_shared, &payload()),
+        sealed_request(ROUTE, "foo", &baz_shared, &payload()),
         StatusCode::UNAUTHORIZED,
         "Sealed message could not be opened",
     )
@@ -332,11 +327,11 @@ async fn rejects_an_envelope_under_another_key() {
 #[tokio::test]
 async fn rejects_plaintext_that_is_not_an_object_or_lacks_ts() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let app = fx.app();
     expect_rejection(
         app.clone(),
-        sealed_request(ROUTE, "auth", &auth_shared, &json!([1])),
+        sealed_request(ROUTE, "foo", &foo_shared, &json!([1])),
         StatusCode::UNAUTHORIZED,
         "Sealed payload is not an object",
     )
@@ -345,8 +340,8 @@ async fn rejects_plaintext_that_is_not_an_object_or_lacks_ts() {
         app.clone(),
         sealed_request(
             ROUTE,
-            "auth",
-            &auth_shared,
+            "foo",
+            &foo_shared,
             &json!({ "requestId": new_request_id() }),
         ),
         StatusCode::UNAUTHORIZED,
@@ -357,8 +352,8 @@ async fn rejects_plaintext_that_is_not_an_object_or_lacks_ts() {
         app,
         sealed_request(
             ROUTE,
-            "auth",
-            &auth_shared,
+            "foo",
+            &foo_shared,
             &json!({ "ts": "soon", "requestId": new_request_id() }),
         ),
         StatusCode::UNAUTHORIZED,
@@ -370,14 +365,14 @@ async fn rejects_plaintext_that_is_not_an_object_or_lacks_ts() {
 #[tokio::test]
 async fn rejects_stale_and_future_timestamps() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let app = fx.app();
     for ts in [now_millis() - 61_000, now_millis() + 61_000] {
         let mut plaintext = payload();
         plaintext["ts"] = json!(ts);
         expect_rejection(
             app.clone(),
-            sealed_request(ROUTE, "auth", &auth_shared, &plaintext),
+            sealed_request(ROUTE, "foo", &foo_shared, &plaintext),
             StatusCode::UNAUTHORIZED,
             "Sealed payload is stale",
         )
@@ -388,7 +383,7 @@ async fn rejects_stale_and_future_timestamps() {
 #[tokio::test]
 async fn rejects_invalid_request_ids() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let app = fx.app();
     for id in [
         json!("short"),
@@ -400,7 +395,7 @@ async fn rejects_invalid_request_ids() {
         plaintext["requestId"] = id;
         expect_rejection(
             app.clone(),
-            sealed_request(ROUTE, "auth", &auth_shared, &plaintext),
+            sealed_request(ROUTE, "foo", &foo_shared, &plaintext),
             StatusCode::UNAUTHORIZED,
             "Sealed payload has an invalid requestId",
         )
@@ -411,13 +406,13 @@ async fn rejects_invalid_request_ids() {
 #[tokio::test]
 async fn rejects_a_replayed_request_id() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let app = fx.app();
     let plaintext = payload();
 
     let first = app
         .clone()
-        .oneshot(sealed_request(ROUTE, "auth", &auth_shared, &plaintext))
+        .oneshot(sealed_request(ROUTE, "foo", &foo_shared, &plaintext))
         .await
         .unwrap();
     assert_eq!(first.status(), StatusCode::OK);
@@ -425,7 +420,7 @@ async fn rejects_a_replayed_request_id() {
     // A fresh envelope (new nonce) with the same requestId is still a replay.
     expect_rejection(
         app,
-        sealed_request(ROUTE, "auth", &auth_shared, &plaintext),
+        sealed_request(ROUTE, "foo", &foo_shared, &plaintext),
         StatusCode::UNAUTHORIZED,
         "Sealed payload was already used",
     )
@@ -435,11 +430,11 @@ async fn rejects_a_replayed_request_id() {
 #[tokio::test]
 async fn answers_503_when_the_replay_store_is_down() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
-    let receiver = DhReceiver::new(fx.edge_sk.clone(), fx.keys.clone(), Arc::new(FailingReplay));
+    let foo_shared = fx.foo_shared.clone();
+    let receiver = DhReceiver::new(fx.bar_sk.clone(), fx.keys.clone(), Arc::new(FailingReplay));
     expect_rejection(
         Fixture::app_with(receiver),
-        sealed_request(ROUTE, "auth", &auth_shared, &payload()),
+        sealed_request(ROUTE, "foo", &foo_shared, &payload()),
         StatusCode::SERVICE_UNAVAILABLE,
         "Replay store is not available",
     )
@@ -449,12 +444,12 @@ async fn answers_503_when_the_replay_store_is_down() {
 #[tokio::test]
 async fn answers_503_when_the_shared_key_cannot_be_derived() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     // No private key configured on this side.
     let receiver = DhReceiver::new(" ", fx.keys.clone(), Arc::new(InMemoryReplayStore::new()));
     expect_rejection(
         Fixture::app_with(receiver),
-        sealed_request(ROUTE, "auth", &auth_shared, &payload()),
+        sealed_request(ROUTE, "foo", &foo_shared, &payload()),
         StatusCode::SERVICE_UNAVAILABLE,
         "Key authorization service is not available",
     )
@@ -464,12 +459,12 @@ async fn answers_503_when_the_shared_key_cannot_be_derived() {
 #[tokio::test]
 async fn payload_extractor_answers_422_when_the_plaintext_does_not_fit() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     let mut plaintext = payload();
     plaintext.as_object_mut().unwrap().remove("password");
     let response = fx
         .app()
-        .oneshot(sealed_request(ROUTE, "auth", &auth_shared, &plaintext))
+        .oneshot(sealed_request(ROUTE, "foo", &foo_shared, &plaintext))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
@@ -482,7 +477,7 @@ async fn context_without_the_middleware_is_a_server_error() {
     let fx = Fixture::new();
     expect_rejection(
         fx.app(),
-        raw_request("/unguarded", Some("auth"), "{}"),
+        raw_request("/unguarded", Some("foo"), "{}"),
         StatusCode::INTERNAL_SERVER_ERROR,
         "DhContext requires the dh_auth middleware on this route",
     )
@@ -492,10 +487,10 @@ async fn context_without_the_middleware_is_a_server_error() {
 #[tokio::test]
 async fn seal_response_refuses_a_non_object_body() {
     let fx = Fixture::new();
-    let auth_shared = fx.auth_shared.clone();
+    let foo_shared = fx.foo_shared.clone();
     expect_rejection(
         fx.app(),
-        sealed_request("/bad-body", "auth", &auth_shared, &payload()),
+        sealed_request("/bad-body", "foo", &foo_shared, &payload()),
         StatusCode::INTERNAL_SERVER_ERROR,
         "sealed response body must be a JSON object",
     )
@@ -507,5 +502,5 @@ async fn debug_output_hides_keys() {
     let fx = Fixture::new();
     let debug = format!("{:?}", fx.receiver);
     assert!(debug.contains("DhReceiver"));
-    assert!(!debug.contains(&fx.edge_sk));
+    assert!(!debug.contains(&fx.bar_sk));
 }

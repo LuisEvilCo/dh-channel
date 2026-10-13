@@ -45,7 +45,7 @@ fn status_to_error(peer: &str, status: StatusCode, body: &str) -> Error {
         StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => ErrorKind::InvalidInput,
         _ => ErrorKind::Other,
     };
-    // Upstream error bodies are unsealed Nest exceptions; keep them short.
+    // Upstream error bodies are unsealed framework exceptions; keep them short.
     let snippet: String = body.chars().take(200).collect();
     Error::new(
         kind,
