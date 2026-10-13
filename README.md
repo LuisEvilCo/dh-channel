@@ -4,8 +4,8 @@ Sealed inter-service channel for Rust services: static Diffie-Hellman over
 Ed25519 identities, libsodium `crypto_box` envelopes, an axum receiver and a
 reqwest client.
 
-A TypeScript counterpart for NestJS services exists; both carry a fixture
-produced by the other, so the wire format cannot drift.
+A TypeScript counterpart exists; both carry a fixture produced by the other,
+so the wire format cannot drift.
 
 ## How it works
 
