@@ -294,6 +294,10 @@ mod error_tests {
             "public key could not be converted from ed25519 to x25519"
         );
         assert_eq!(
+            DhError::LowOrderPublicKey.to_string(),
+            "public key is a low-order point"
+        );
+        assert_eq!(
             DhError::CiphertextTooShort.to_string(),
             "sealed message is too short"
         );
@@ -321,5 +325,127 @@ mod error_tests {
     fn is_a_std_error() {
         fn takes_error(_: &dyn std::error::Error) {}
         takes_error(&DhError::InvalidUtf8);
+    }
+}
+
+mod key_validation_tests {
+    //! Low-order, zero and non-canonical peer keys are refused before any key
+    //! is derived (RFC 7748 section 6.1). These are the points libsodium
+    //! blocklists in `crypto_sign_ed25519_pk_to_curve25519`.
+
+    use super::*;
+
+    const REJECTED_ED25519_POINTS: [(&str, &str); 9] = [
+        (
+            "all zero",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        (
+            "identity (y=1)",
+            "0100000000000000000000000000000000000000000000000000000000000000",
+        ),
+        (
+            "order 2 (y=-1)",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
+        (
+            "order 8",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        ),
+        (
+            "order 8",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        ),
+        (
+            "order 8",
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        ),
+        (
+            "order 8",
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        ),
+        (
+            "non-canonical (y=p)",
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
+        (
+            "non-canonical (y=p+1)",
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
+    ];
+
+    #[test]
+    fn rejects_low_order_zero_and_non_canonical_peer_keys() {
+        let (_, sk) = keypair_hex();
+        for (name, pk) in REJECTED_ED25519_POINTS {
+            assert_eq!(
+                compute_shared_secret(&sk, pk),
+                Err(DhError::KeyConversion("public key")),
+                "{name}: {pk}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_them_with_trailing_whitespace_too() {
+        let (_, sk) = keypair_hex();
+        for (_, pk) in REJECTED_ED25519_POINTS {
+            assert!(compute_shared_secret(&sk, &format!("{pk}\n")).is_err());
+        }
+    }
+}
+
+mod rfc7748_vectors {
+    //! The X25519 function the crate relies on, checked against the test
+    //! vectors in RFC 7748 sections 5.2 and 6.1.
+
+    use sodiumoxide::crypto::scalarmult::curve25519::{
+        GroupElement, Scalar, scalarmult, scalarmult_base,
+    };
+
+    fn bytes(hex: &str) -> [u8; 32] {
+        hex::decode(hex).unwrap().try_into().unwrap()
+    }
+
+    #[test]
+    fn section_6_1_diffie_hellman() {
+        let alice_sk = Scalar(bytes(
+            "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+        ));
+        let alice_pk = bytes("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
+        let bob_sk = Scalar(bytes(
+            "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+        ));
+        let bob_pk = bytes("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
+        let shared = bytes("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
+
+        assert_eq!(scalarmult_base(&alice_sk).0, alice_pk);
+        assert_eq!(scalarmult_base(&bob_sk).0, bob_pk);
+        assert_eq!(
+            scalarmult(&alice_sk, &GroupElement(bob_pk)).unwrap().0,
+            shared
+        );
+        assert_eq!(
+            scalarmult(&bob_sk, &GroupElement(alice_pk)).unwrap().0,
+            shared
+        );
+    }
+
+    #[test]
+    fn section_5_2_iterated() {
+        let mut k = bytes("0900000000000000000000000000000000000000000000000000000000000000");
+        let mut u = k;
+        let after_1 = bytes("422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079");
+        let after_1000 = bytes("684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51");
+
+        for i in 1..=1000 {
+            let next = scalarmult(&Scalar(k), &GroupElement(u)).unwrap().0;
+            u = k;
+            k = next;
+            if i == 1 {
+                assert_eq!(k, after_1);
+            }
+        }
+        assert_eq!(k, after_1000);
     }
 }

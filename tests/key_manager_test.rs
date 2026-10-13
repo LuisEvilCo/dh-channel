@@ -32,9 +32,9 @@ fn failing_fetcher(message: &'static str) -> Box<dyn KeyFetcher> {
 
 fn peers() -> Vec<Peer> {
     vec![
-        Peer::new("auth", "auth.internal:20060"),
-        Peer::new("contacts", "https://contacts.internal/"),
-        Peer::new("sync", "http://sync.internal"),
+        Peer::new("foo", "foo.internal:8443"),
+        Peer::new("baz", "https://baz.internal/"),
+        Peer::new("qux", "http://qux.internal"),
     ]
 }
 
@@ -44,20 +44,20 @@ mod peer_tests {
     #[test]
     fn normalises_the_keys_url() {
         assert_eq!(
-            Peer::new("auth", "auth.internal:20060").keys_url,
-            "https://auth.internal:20060/keys"
+            Peer::new("foo", "foo.internal:8443").keys_url,
+            "https://foo.internal:8443/keys"
         );
         assert_eq!(
-            Peer::new("contacts", "https://contacts.internal/").keys_url,
-            "https://contacts.internal/keys"
+            Peer::new("baz", "https://baz.internal/").keys_url,
+            "https://baz.internal/keys"
         );
         assert_eq!(
-            Peer::new("sync", "http://sync.internal").keys_url,
-            "http://sync.internal/keys"
+            Peer::new("qux", "http://qux.internal").keys_url,
+            "http://qux.internal/keys"
         );
         assert_eq!(
-            Peer::new("edge", " edge.internal ").keys_url,
-            "https://edge.internal/keys"
+            Peer::new("bar", " bar.internal ").keys_url,
+            "https://bar.internal/keys"
         );
     }
 
@@ -93,30 +93,30 @@ mod registry_tests {
         let manager = KeyManager::with_fetcher(peers(), failing_fetcher("unused"));
         let mut ids = manager.peer_ids();
         ids.sort();
-        assert_eq!(ids, ["auth", "contacts", "sync"]);
-        assert!(manager.is_known_peer("auth"));
-        assert!(!manager.is_known_peer("edge"));
+        assert_eq!(ids, ["baz", "foo", "qux"]);
+        assert!(manager.is_known_peer("foo"));
+        assert!(!manager.is_known_peer("bar"));
         assert!(!manager.is_known_peer(""));
         assert_eq!(
-            manager.peer("auth").unwrap().keys_url,
-            "https://auth.internal:20060/keys"
+            manager.peer("foo").unwrap().keys_url,
+            "https://foo.internal:8443/keys"
         );
         assert!(manager.peer("nobody").is_none());
-        assert!(format!("{manager:?}").contains("auth"));
+        assert!(format!("{manager:?}").contains("foo"));
     }
 
     #[test]
     fn later_peers_with_the_same_id_win() {
         let manager = KeyManager::with_fetcher(
             vec![
-                Peer::new("auth", "old.internal"),
-                Peer::new("auth", "new.internal"),
+                Peer::new("foo", "old.internal"),
+                Peer::new("foo", "new.internal"),
             ],
             failing_fetcher("unused"),
         );
-        assert_eq!(manager.peer_ids(), ["auth"]);
+        assert_eq!(manager.peer_ids(), ["foo"]);
         assert_eq!(
-            manager.peer("auth").unwrap().keys_url,
+            manager.peer("foo").unwrap().keys_url,
             "https://new.internal/keys"
         );
     }
@@ -137,8 +137,8 @@ mod get_key_tests {
     #[tokio::test]
     async fn fetches_once_and_caches() {
         let (manager, calls) = manager_with("abcd");
-        let first = manager.get_key("auth").await.unwrap();
-        let second = manager.get_key("auth").await.unwrap();
+        let first = manager.get_key("foo").await.unwrap();
+        let second = manager.get_key("foo").await.unwrap();
         assert_eq!(first, PublicKeys::new("abcd"));
         assert_eq!(first, second);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -147,18 +147,18 @@ mod get_key_tests {
     #[tokio::test]
     async fn caches_per_peer() {
         let (manager, calls) = manager_with("abcd");
-        manager.get_key("auth").await.unwrap();
-        manager.get_key("sync").await.unwrap();
-        manager.get_key("auth").await.unwrap();
+        manager.get_key("foo").await.unwrap();
+        manager.get_key("qux").await.unwrap();
+        manager.get_key("foo").await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn evict_refetches() {
         let (manager, calls) = manager_with("abcd");
-        manager.get_key("auth").await.unwrap();
-        manager.evict("auth").await;
-        manager.get_key("auth").await.unwrap();
+        manager.get_key("foo").await.unwrap();
+        manager.evict("foo").await;
+        manager.get_key("foo").await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
@@ -174,7 +174,7 @@ mod get_key_tests {
     #[tokio::test]
     async fn fetcher_errors_pass_through() {
         let manager = KeyManager::with_fetcher(peers(), failing_fetcher("ECONNREFUSED"));
-        let err = manager.get_key("auth").await.unwrap_err();
+        let err = manager.get_key("foo").await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ConnectionRefused);
         assert_eq!(err.to_string(), "ECONNREFUSED");
     }
@@ -185,41 +185,41 @@ mod get_shared_secret_tests {
 
     #[tokio::test]
     async fn derives_the_key_the_peer_derives_and_caches_it() {
-        let (edge_pk, edge_sk) = generate_keypair_hex();
-        let (auth_pk, auth_sk) = generate_keypair_hex();
+        let (bar_pk, bar_sk) = generate_keypair_hex();
+        let (foo_pk, foo_sk) = generate_keypair_hex();
         let calls = Arc::new(AtomicUsize::new(0));
         let manager = KeyManager::with_fetcher(
-            vec![Peer::new("auth", "auth.internal")],
+            vec![Peer::new("foo", "foo.internal")],
             Box::new(CountingFetcher {
-                public_key_hex: format!("{auth_pk}\n"),
+                public_key_hex: format!("{foo_pk}\n"),
                 calls: calls.clone(),
             }),
         );
 
-        let first = manager.get_shared_secret("auth", &edge_sk).await.unwrap();
-        let second = manager.get_shared_secret("auth", &edge_sk).await.unwrap();
-        let auth_side = compute_shared_secret(&auth_sk, &edge_pk).unwrap();
+        let first = manager.get_shared_secret("foo", &bar_sk).await.unwrap();
+        let second = manager.get_shared_secret("foo", &bar_sk).await.unwrap();
+        let foo_side = compute_shared_secret(&foo_sk, &bar_pk).unwrap();
 
-        assert_eq!(first.0, auth_side.0);
+        assert_eq!(first.0, foo_side.0);
         assert_eq!(second.0, first.0);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn evict_drops_the_shared_key_too() {
-        let (_, edge_sk) = generate_keypair_hex();
-        let (auth_pk, _) = generate_keypair_hex();
+        let (_, bar_sk) = generate_keypair_hex();
+        let (foo_pk, _) = generate_keypair_hex();
         let calls = Arc::new(AtomicUsize::new(0));
         let manager = KeyManager::with_fetcher(
-            vec![Peer::new("auth", "auth.internal")],
+            vec![Peer::new("foo", "foo.internal")],
             Box::new(CountingFetcher {
-                public_key_hex: auth_pk,
+                public_key_hex: foo_pk,
                 calls: calls.clone(),
             }),
         );
-        let _ = manager.get_shared_secret("auth", &edge_sk).await.unwrap();
-        manager.evict("auth").await;
-        let _ = manager.get_shared_secret("auth", &edge_sk).await.unwrap();
+        let _ = manager.get_shared_secret("foo", &bar_sk).await.unwrap();
+        manager.evict("foo").await;
+        let _ = manager.get_shared_secret("foo", &bar_sk).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
@@ -238,7 +238,7 @@ mod get_shared_secret_tests {
         let err = manager.get_shared_secret("mallory", &sk).await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotFound);
 
-        let err = manager.get_shared_secret("auth", "  ").await.unwrap_err();
+        let err = manager.get_shared_secret("foo", "  ").await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData);
         assert!(err.to_string().contains("private key"));
 
@@ -255,18 +255,18 @@ mod get_shared_secret_tests {
                 calls: Arc::new(AtomicUsize::new(0)),
             }),
         );
-        let err = manager.get_shared_secret("auth", &sk).await.unwrap_err();
+        let err = manager.get_shared_secret("foo", &sk).await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData);
 
-        let (auth_pk, _) = generate_keypair_hex();
+        let (foo_pk, _) = generate_keypair_hex();
         let manager = KeyManager::with_fetcher(
             peers(),
             Box::new(CountingFetcher {
-                public_key_hex: auth_pk,
+                public_key_hex: foo_pk,
                 calls: Arc::new(AtomicUsize::new(0)),
             }),
         );
-        let err = manager.get_shared_secret("auth", "test").await.unwrap_err();
+        let err = manager.get_shared_secret("foo", "test").await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData);
     }
 
@@ -274,7 +274,7 @@ mod get_shared_secret_tests {
     async fn fetch_errors_pass_through() {
         let (_, sk) = generate_keypair_hex();
         let manager = KeyManager::with_fetcher(peers(), failing_fetcher("down"));
-        let err = manager.get_shared_secret("auth", &sk).await.unwrap_err();
+        let err = manager.get_shared_secret("foo", &sk).await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ConnectionRefused);
     }
 }
@@ -300,9 +300,9 @@ mod http_fetcher_tests {
             json!({ "status": "success", "data": { "ed25519": { "publicKey": "abcd\n" } } }),
         )
         .await;
-        let manager = KeyManager::new(vec![Peer::new("auth", server.uri())]);
+        let manager = KeyManager::new(vec![Peer::new("foo", server.uri())]);
         assert_eq!(
-            manager.get_key("auth").await.unwrap(),
+            manager.get_key("foo").await.unwrap(),
             PublicKeys::new("abcd\n")
         );
     }
@@ -312,7 +312,7 @@ mod http_fetcher_tests {
         let server = server_answering(200, json!({ "ed25519": { "publicKey": "abcd" } })).await;
         let fetcher = HttpKeyFetcher::new(reqwest::Client::new());
         let keys = fetcher
-            .fetch(&Peer::new("auth", server.uri()))
+            .fetch(&Peer::new("foo", server.uri()))
             .await
             .unwrap();
         assert_eq!(keys, PublicKeys::new("abcd"));
@@ -321,16 +321,16 @@ mod http_fetcher_tests {
     #[tokio::test]
     async fn non_success_status_is_an_error() {
         let server = server_answering(503, json!({ "status": "error", "data": "nope" })).await;
-        let manager = KeyManager::new(vec![Peer::new("auth", server.uri())]);
-        let err = manager.get_key("auth").await.unwrap_err();
+        let manager = KeyManager::new(vec![Peer::new("foo", server.uri())]);
+        let err = manager.get_key("foo").await.unwrap_err();
         assert!(err.to_string().contains("503"), "{err}");
     }
 
     #[tokio::test]
     async fn missing_key_in_the_body_is_invalid_data() {
         let server = server_answering(200, json!({ "status": "success", "data": {} })).await;
-        let manager = KeyManager::new(vec![Peer::new("auth", server.uri())]);
-        let err = manager.get_key("auth").await.unwrap_err();
+        let manager = KeyManager::new(vec![Peer::new("foo", server.uri())]);
+        let err = manager.get_key("foo").await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData);
     }
 
@@ -342,15 +342,15 @@ mod http_fetcher_tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
             .mount(&server)
             .await;
-        let manager = KeyManager::new(vec![Peer::new("auth", server.uri())]);
-        let err = manager.get_key("auth").await.unwrap_err();
+        let manager = KeyManager::new(vec![Peer::new("foo", server.uri())]);
+        let err = manager.get_key("foo").await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData);
     }
 
     #[tokio::test]
     async fn unreachable_peer_is_an_error() {
-        let manager = KeyManager::new(vec![Peer::new("auth", "http://127.0.0.1:1")]);
-        let err = manager.get_key("auth").await.unwrap_err();
-        assert!(err.to_string().contains("auth"), "{err}");
+        let manager = KeyManager::new(vec![Peer::new("foo", "http://127.0.0.1:1")]);
+        let err = manager.get_key("foo").await.unwrap_err();
+        assert!(err.to_string().contains("foo"), "{err}");
     }
 }

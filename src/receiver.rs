@@ -17,7 +17,7 @@
 //! bodies, as the NestJS guard produces.
 //!
 //! ```ignore
-//! let receiver = Arc::new(DhReceiver::new(private_key_hex, keys, replay).allow(["auth"]));
+//! let receiver = Arc::new(DhReceiver::new(private_key_hex, keys, replay).allow(["foo"]));
 //! let app = Router::new().route(
 //!     "/v2/internal/login-token",
 //!     post(login_token).route_layer(middleware::from_fn_with_state(receiver, dh_auth)),

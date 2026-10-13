@@ -28,9 +28,8 @@
 //! - [`receiver`] (feature `axum`): the [`receiver::dh_auth`] middleware, the
 //!   [`receiver::DhPayload`] extractor and [`receiver::seal_response`].
 //!
-//! The TypeScript counterpart for NestJS services is
-//! `@tendril-llc/nest-dh-channel`; both carry a fixture produced by the other
-//! so the wire format cannot drift.
+//! A TypeScript counterpart for NestJS services exists; both carry a fixture
+//! produced by the other so the wire format cannot drift.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

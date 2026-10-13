@@ -18,7 +18,7 @@ use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-const ROUTE: &str = "/auth/v2/internal/login-token";
+const ROUTE: &str = "/internal/login-token";
 
 #[derive(Serialize, Deserialize)]
 struct LoginRequest {
@@ -82,7 +82,7 @@ impl Respond for FakePeer {
             .get(SERVICE_ID_HEADER)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        if sender != "auth" {
+        if sender != "foo" {
             return ResponseTemplate::new(401)
                 .set_body_json(json!({ "statusCode": 401, "message": "Unknown service" }));
         }
@@ -119,7 +119,7 @@ impl Respond for FakePeer {
         let reply = LoginResponse {
             ts: now_millis(),
             request_id,
-            auth_token: "edge.jwt".into(),
+            auth_token: "bar.jwt".into(),
         };
         match self.behaviour {
             Behaviour::NotAnEnvelope => {
@@ -139,44 +139,44 @@ impl Respond for FakePeer {
     }
 }
 
-/// An auth keypair (the sender), an edge keypair (the receiver), a mock
-/// edge serving `/keys`, and the client wired to it.
+/// A foo keypair (the sender), a bar keypair (the receiver), a mock
+/// bar serving `/keys`, and the client wired to it.
 struct Fixture {
     server: MockServer,
     client: DhClient,
-    edge_shared: PrecomputedKey,
-    auth_shared: PrecomputedKey,
+    bar_shared: PrecomputedKey,
+    foo_shared: PrecomputedKey,
 }
 
 impl Fixture {
     async fn new() -> Self {
-        let (edge_pk, edge_sk) = generate_keypair_hex();
-        let (auth_pk, auth_sk) = generate_keypair_hex();
+        let (bar_pk, bar_sk) = generate_keypair_hex();
+        let (foo_pk, foo_sk) = generate_keypair_hex();
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/keys"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "status": "success",
-                "data": { "ed25519": { "publicKey": format!("{edge_pk}\n") } }
+                "data": { "ed25519": { "publicKey": format!("{bar_pk}\n") } }
             })))
             .mount(&server)
             .await;
 
-        let keys = Arc::new(KeyManager::new(vec![Peer::new("edge", server.uri())]));
-        let client = DhClient::new("auth", auth_sk.clone(), keys);
+        let keys = Arc::new(KeyManager::new(vec![Peer::new("bar", server.uri())]));
+        let client = DhClient::new("foo", foo_sk.clone(), keys);
         Fixture {
-            edge_shared: compute_shared_secret(&edge_sk, &auth_pk).unwrap(),
-            auth_shared: compute_shared_secret(&auth_sk, &edge_pk).unwrap(),
+            bar_shared: compute_shared_secret(&bar_sk, &foo_pk).unwrap(),
+            foo_shared: compute_shared_secret(&foo_sk, &bar_pk).unwrap(),
             server,
             client,
         }
     }
 
-    async fn edge_behaves(&self, behaviour: Behaviour) {
+    async fn bar_behaves(&self, behaviour: Behaviour) {
         Mock::given(method("POST"))
             .and(path(ROUTE))
             .respond_with(FakePeer {
-                shared: self.edge_shared.clone(),
+                shared: self.bar_shared.clone(),
                 behaviour,
             })
             .mount(&self.server)
@@ -188,29 +188,29 @@ impl Fixture {
     }
 
     async fn post(&self) -> Result<LoginResponse, std::io::Error> {
-        self.client.post("edge", &self.url(), &login()).await
+        self.client.post("bar", &self.url(), &login()).await
     }
 }
 
 #[tokio::test]
 async fn opens_the_sealed_response_and_checks_the_echoed_request_id() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::Ok).await;
+    fx.bar_behaves(Behaviour::Ok).await;
 
     let request = login();
-    let response: LoginResponse = fx.client.post("edge", &fx.url(), &request).await.unwrap();
+    let response: LoginResponse = fx.client.post("bar", &fx.url(), &request).await.unwrap();
 
-    assert_eq!(response.auth_token, "edge.jwt");
+    assert_eq!(response.auth_token, "bar.jwt");
     assert_eq!(response.request_id, request.request_id);
-    assert_eq!(fx.client.own_id(), "auth");
-    assert!(fx.client.keys().is_known_peer("edge"));
-    assert!(format!("{:?}", fx.client).contains("auth"));
+    assert_eq!(fx.client.own_id(), "foo");
+    assert!(fx.client.keys().is_known_peer("bar"));
+    assert!(format!("{:?}", fx.client).contains("foo"));
 }
 
 #[tokio::test]
 async fn fetches_the_peer_key_once_across_calls() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::Ok).await;
+    fx.bar_behaves(Behaviour::Ok).await;
     fx.post().await.unwrap();
     fx.post().await.unwrap();
 
@@ -228,7 +228,7 @@ async fn fetches_the_peer_key_once_across_calls() {
 #[tokio::test]
 async fn a_response_with_another_request_id_is_invalid_data() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::WrongRequestId).await;
+    fx.bar_behaves(Behaviour::WrongRequestId).await;
     let err = fx.post().await.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidData);
     assert!(err.to_string().contains("requestId"));
@@ -237,7 +237,7 @@ async fn a_response_with_another_request_id_is_invalid_data() {
 #[tokio::test]
 async fn a_response_under_another_key_is_permission_denied() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::WrongKey).await;
+    fx.bar_behaves(Behaviour::WrongKey).await;
     let err = fx.post().await.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::PermissionDenied);
 }
@@ -245,7 +245,7 @@ async fn a_response_under_another_key_is_permission_denied() {
 #[tokio::test]
 async fn a_body_that_is_not_an_envelope_is_invalid_data() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::NotAnEnvelope).await;
+    fx.bar_behaves(Behaviour::NotAnEnvelope).await;
     let err = fx.post().await.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidData);
     assert!(err.to_string().contains("not a sealed envelope"));
@@ -254,7 +254,7 @@ async fn a_body_that_is_not_an_envelope_is_invalid_data() {
 #[tokio::test]
 async fn a_plaintext_of_the_wrong_shape_is_invalid_data() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::NotAnObject).await;
+    fx.bar_behaves(Behaviour::NotAnObject).await;
     let err = fx.post().await.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidData);
 }
@@ -271,7 +271,7 @@ async fn upstream_statuses_map_to_error_kinds() {
         (502, ErrorKind::Other),
     ] {
         let fx = Fixture::new().await;
-        fx.edge_behaves(Behaviour::Status(status)).await;
+        fx.bar_behaves(Behaviour::Status(status)).await;
         let err = fx.post().await.unwrap_err();
         assert_eq!(err.kind(), kind, "status {status}");
         let message = err.to_string();
@@ -286,7 +286,7 @@ async fn transport_failures_are_other() {
     let fx = Fixture::new().await;
     let err = fx
         .client
-        .post::<_, LoginResponse>("edge", "http://127.0.0.1:1/nowhere", &login())
+        .post::<_, LoginResponse>("bar", "http://127.0.0.1:1/nowhere", &login())
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Other);
@@ -308,14 +308,9 @@ async fn an_unknown_peer_fails_before_sending() {
 #[tokio::test]
 async fn a_missing_own_key_fails_before_sending() {
     let fx = Fixture::new().await;
-    let client = DhClient::with_http(
-        "auth",
-        " ",
-        fx.client.keys().clone(),
-        reqwest::Client::new(),
-    );
+    let client = DhClient::with_http("foo", " ", fx.client.keys().clone(), reqwest::Client::new());
     let err = client
-        .post::<_, LoginResponse>("edge", &fx.url(), &login())
+        .post::<_, LoginResponse>("bar", &fx.url(), &login())
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidData);
@@ -324,14 +319,14 @@ async fn a_missing_own_key_fails_before_sending() {
 #[tokio::test]
 async fn post_sealed_sends_the_sender_header_and_json() {
     let fx = Fixture::new().await;
-    fx.edge_behaves(Behaviour::Ok).await;
+    fx.bar_behaves(Behaviour::Ok).await;
 
     let request = login();
     let response: LoginResponse = post_sealed(
         &reqwest::Client::new(),
         &fx.url(),
-        "auth",
-        &fx.auth_shared,
+        "foo",
+        &fx.foo_shared,
         &request,
     )
     .await
@@ -342,8 +337,8 @@ async fn post_sealed_sends_the_sender_header_and_json() {
     let err = post_sealed::<_, LoginResponse>(
         &reqwest::Client::new(),
         &fx.url(),
-        "contacts",
-        &fx.auth_shared,
+        "baz",
+        &fx.foo_shared,
         &request,
     )
     .await
@@ -358,7 +353,7 @@ async fn post_sealed_rejects_an_invalid_sender_id() {
         &reqwest::Client::new(),
         &fx.url(),
         "bad\nid",
-        &fx.auth_shared,
+        &fx.foo_shared,
         &login(),
     )
     .await

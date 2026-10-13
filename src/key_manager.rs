@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Peer {
     /// The id the peer sends in `X-Service-Id`, and the id it expects when
-    /// this service calls it: `auth`, `edge`, `contacts`, `sync`.
+    /// this service calls it: `foo`, `bar`, `baz`.
     pub id: String,
     /// Full URL of the peer's public key endpoint.
     pub keys_url: String,

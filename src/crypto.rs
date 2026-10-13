@@ -17,6 +17,7 @@
 
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::PrecomputedKey;
+use sodiumoxide::crypto::scalarmult::curve25519;
 use sodiumoxide::crypto::sign::ed25519;
 use std::fmt;
 use std::io::{Error, ErrorKind};
@@ -28,6 +29,7 @@ pub const MAC_BYTES: usize = box_::MACBYTES;
 
 /// Errors produced by the sealed channel primitives.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DhError {
     /// A hex string could not be decoded. Names the offending input.
     InvalidHex(&'static str),
@@ -35,6 +37,9 @@ pub enum DhError {
     InvalidKeyLength(&'static str),
     /// Ed25519 to X25519 conversion was rejected by libsodium. Names the key.
     KeyConversion(&'static str),
+    /// The peer's public key is a low-order point, so the X25519 output would
+    /// be all zero (RFC 7748 section 6.1).
+    LowOrderPublicKey,
     /// The envelope is shorter than nonce + MAC, so it cannot contain a message.
     CiphertextTooShort,
     /// Authentication failed: wrong shared key or tampered ciphertext.
@@ -51,6 +56,7 @@ impl fmt::Display for DhError {
             DhError::KeyConversion(what) => {
                 write!(f, "{what} could not be converted from ed25519 to x25519")
             }
+            DhError::LowOrderPublicKey => write!(f, "public key is a low-order point"),
             DhError::CiphertextTooShort => write!(f, "sealed message is too short"),
             DhError::DecryptionFailed => write!(f, "sealed message failed to open"),
             DhError::InvalidUtf8 => write!(f, "opened message is not valid utf-8"),
@@ -84,6 +90,14 @@ impl From<DhError> for Error {
 /// # Returns
 ///
 /// The precomputed X25519 shared key, identical on both sides.
+///
+/// # Key validation
+///
+/// libsodium rejects small-order and non-canonical Ed25519 points during
+/// conversion ([`DhError::KeyConversion`]). Independently of that, the X25519
+/// output is checked for the all-zero value that a low-order point produces,
+/// as RFC 7748 section 6.1 recommends ([`DhError::LowOrderPublicKey`]), so a
+/// weak shared key is never derived even if the conversion check were bypassed.
 pub fn compute_shared_secret(
     own_private_key_hex: &str,
     peer_public_key_hex: &str,
@@ -106,7 +120,24 @@ pub fn compute_shared_secret(
     let peer_kx_pk =
         box_::PublicKey::from_slice(&peer_kx_pk.0).ok_or(DhError::KeyConversion("public key"))?;
 
+    reject_low_order(&own_kx_sk, &peer_kx_pk)?;
+
     Ok(box_::precompute(&peer_kx_pk, &own_kx_sk))
+}
+
+/// RFC 7748 section 6.1: refuse a peer point whose X25519 output is all zero.
+///
+/// `crypto_box_beforenm` performs the same check internally but sodiumoxide's
+/// `precompute` discards its return value and hands back an all-zero key, so
+/// the scalar multiplication is run once more here where the result is
+/// observable.
+fn reject_low_order(own_sk: &box_::SecretKey, peer_pk: &box_::PublicKey) -> Result<(), DhError> {
+    curve25519::scalarmult(
+        &curve25519::Scalar(own_sk.0),
+        &curve25519::GroupElement(peer_pk.0),
+    )
+    .map(|_| ())
+    .map_err(|_| DhError::LowOrderPublicKey)
 }
 
 /// Seals a plaintext message for the peer.
@@ -171,4 +202,50 @@ pub fn generate_keypair_hex() -> (String, String) {
     let _ = sodiumoxide::init();
     let (pk, sk) = ed25519::gen_keypair();
     (hex::encode(pk.as_ref()), hex::encode(sk.as_ref()))
+}
+
+#[cfg(test)]
+mod low_order_tests {
+    //! `reject_low_order` is unreachable through the public API with a
+    //! low-order point, because Ed25519 conversion rejects it first, so the
+    //! X25519 layer is exercised directly here.
+
+    use super::*;
+
+    fn point(bytes: [u8; 32]) -> box_::PublicKey {
+        box_::PublicKey(bytes)
+    }
+
+    #[test]
+    fn rejects_the_low_order_montgomery_points() {
+        let (_, sk) = box_::gen_keypair();
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        let mut p_minus_1 = [0xffu8; 32];
+        p_minus_1[0] = 0xec;
+        p_minus_1[31] = 0x7f;
+
+        for (name, u) in [("u=0", [0u8; 32]), ("u=1", one), ("u=p-1", p_minus_1)] {
+            assert_eq!(
+                reject_low_order(&sk, &point(u)),
+                Err(DhError::LowOrderPublicKey),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_a_valid_point() {
+        let (pk, _) = box_::gen_keypair();
+        let (_, sk) = box_::gen_keypair();
+        assert_eq!(reject_low_order(&sk, &pk), Ok(()));
+    }
+
+    #[test]
+    fn sodiumoxide_precompute_would_have_returned_an_all_zero_key() {
+        // Documents why `reject_low_order` exists.
+        let (_, sk) = box_::gen_keypair();
+        let key = box_::precompute(&point([0u8; 32]), &sk);
+        assert_eq!(key.0, [0u8; 32]);
+    }
 }

@@ -135,8 +135,8 @@ impl KeyPair {
 
 /// Builds the `GET /keys` reply: `(200, success body)` or `(503, error body)`.
 ///
-/// Replaces the `checkService` copies in each service. The error messages
-/// match the NestJS helper so every service answers the same way.
+/// The error messages match the NestJS helper so every service answers the
+/// same way.
 pub fn public_keys_reply(public_key_hex: &str, private_key_hex: &str) -> (u16, Value) {
     match KeyPair::new(public_key_hex, private_key_hex) {
         Ok(pair) => (
