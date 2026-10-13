@@ -3,8 +3,8 @@
 //! Every service answers `GET /keys` with its Ed25519 public key in the
 //! `{ "status": "success", "data": { "ed25519": { "publicKey": "<hex>" } } }`
 //! envelope. [`public_keys_reply`] builds that body, or the 503 error body
-//! when either half of the pair is missing, with the same messages the
-//! NestJS services use.
+//! when either half of the pair is missing, with the same messages on every
+//! service.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -135,8 +135,7 @@ impl KeyPair {
 
 /// Builds the `GET /keys` reply: `(200, success body)` or `(503, error body)`.
 ///
-/// The error messages match the NestJS helper so every service answers the
-/// same way.
+/// The error messages are fixed so every service answers the same way.
 pub fn public_keys_reply(public_key_hex: &str, private_key_hex: &str) -> (u16, Value) {
     match KeyPair::new(public_key_hex, private_key_hex) {
         Ok(pair) => (

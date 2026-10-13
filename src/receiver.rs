@@ -14,7 +14,7 @@
 //! On success a [`DhContext`] is attached to the request so handlers can take
 //! [`DhPayload`] or [`DhSender`] as extractors and answer with
 //! [`seal_response`]. Rejections are plain JSON `{ statusCode, message }`
-//! bodies, as the NestJS guard produces.
+//! bodies, the same shape the TypeScript counterpart produces.
 //!
 //! ```ignore
 //! let receiver = Arc::new(DhReceiver::new(private_key_hex, keys, replay).allow(["foo"]));
