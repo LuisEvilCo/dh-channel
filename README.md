@@ -46,8 +46,10 @@ blocklists are asserted rejected in `tests/crypto_test.rs`.
 dh-channel = "0.1"
 ```
 
-Features: `client` (reqwest sender) and `axum` (receiver), both on by default.
-A service that only receives can use `default-features = false, features = ["axum"]`.
+Features: `client` (reqwest sender, native TLS) and `axum` (receiver), both on by
+default. A service that only receives can use `default-features = false,
+features = ["axum"]`. A service built into an image without OpenSSL (distroless)
+uses `client-rustls` instead of `client`: same API, rustls as the TLS backend.
 
 ## Publish your keys
 

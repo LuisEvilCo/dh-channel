@@ -1,6 +1,6 @@
 [package]
 name = "dh-channel"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -14,8 +14,12 @@ exclude = [".github/", "tests/", "coverage/"]
 
 [features]
 default = ["client", "axum"]
-# `DhClient` and `post_sealed`, built on reqwest.
-client = ["dep:reqwest"]
+# `DhClient`, `post_sealed` and `KeyManager::new`, built on reqwest with its
+# default TLS backend (native-tls / OpenSSL).
+client = ["dep:reqwest", "reqwest/default-tls"]
+# The same client on rustls, for images without OpenSSL (distroless).
+# Enable this one instead of `client`; both together build but link both backends.
+client-rustls = ["dep:reqwest", "reqwest/rustls-tls"]
 # `dh_auth` middleware, `DhPayload` extractor and `seal_response`, built on axum.
 axum = ["dep:axum"]
 
@@ -27,7 +31,7 @@ serde_json = "1.0.117"
 tokio = { version = "1.38", features = ["sync"] }
 async-trait = "0.1"
 tracing = "0.1.40"
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
 axum = { version = "0.8", optional = true }
 
 [dev-dependencies]

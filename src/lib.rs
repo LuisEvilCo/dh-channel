@@ -40,7 +40,7 @@ pub mod key_manager;
 pub mod keys;
 pub mod replay;
 
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "client-rustls"))]
 pub mod client;
 
 #[cfg(feature = "axum")]
@@ -55,7 +55,7 @@ pub use key_manager::{KeyFetcher, KeyManager, Peer};
 pub use keys::{KeyPair, KeysError, PublicKeys, public_keys_reply};
 pub use replay::{InMemoryReplayStore, ReplayStore};
 
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "client-rustls"))]
 pub use client::{DhClient, post_sealed};
 
 #[cfg(feature = "axum")]

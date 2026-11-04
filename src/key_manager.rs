@@ -98,13 +98,13 @@ where
 
 /// Fetches `/keys` over HTTP with reqwest. Peers answer either
 /// `{ status, data: { ed25519 } }` or bare `{ ed25519 }`.
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "client-rustls"))]
 #[derive(Clone, Default)]
 pub struct HttpKeyFetcher {
     client: reqwest::Client,
 }
 
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "client-rustls"))]
 impl HttpKeyFetcher {
     /// Uses the given reqwest client (timeouts, proxies and so on come with it).
     pub fn new(client: reqwest::Client) -> Self {
@@ -112,7 +112,7 @@ impl HttpKeyFetcher {
     }
 }
 
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "client-rustls"))]
 impl KeyFetcher for HttpKeyFetcher {
     fn fetch(&self, peer: &Peer) -> FetchFuture {
         let client = self.client.clone();
@@ -161,7 +161,7 @@ impl std::fmt::Debug for KeyManager {
 
 impl KeyManager {
     /// A manager that fetches keys over HTTP.
-    #[cfg(feature = "client")]
+    #[cfg(any(feature = "client", feature = "client-rustls"))]
     pub fn new(peers: Vec<Peer>) -> Self {
         Self::with_fetcher(peers, Box::new(HttpKeyFetcher::default()))
     }
