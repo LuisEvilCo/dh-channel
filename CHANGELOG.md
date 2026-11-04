@@ -3,6 +3,14 @@
 All notable changes to this crate. Versions follow semver; `0.x` means the
 API may still change between minor versions.
 
+## 0.2.1 - 2026-11-04
+
+- New feature `client-rustls`: the sender and the default key fetcher built on
+  reqwest with rustls instead of the native TLS backend, for services shipped
+  in images without OpenSSL. `client` is unchanged (reqwest default TLS);
+  enable one or the other. reqwest is now pulled with `default-features =
+  false` so the chosen feature decides the backend.
+
 ## 0.2.0 - 2026-10-13
 
 - `compute_shared_secret` refuses a peer key whose X25519 output is all zero
