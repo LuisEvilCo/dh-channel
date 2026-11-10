@@ -52,7 +52,9 @@ pub use envelope::{
     now_millis, open_payload, seal_payload,
 };
 pub use key_manager::{KeyFetcher, KeyManager, Peer};
-pub use keys::{KeyPair, KeysError, PublicKeys, public_keys_reply};
+pub use keys::{
+    KeyPair, KeysError, PublicKeys, PublishedKey, public_keys_reply, public_keys_reply_with,
+};
 pub use replay::{InMemoryReplayStore, ReplayStore};
 
 #[cfg(any(feature = "client", feature = "client-rustls"))]

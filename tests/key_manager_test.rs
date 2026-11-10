@@ -354,3 +354,185 @@ mod http_fetcher_tests {
         assert!(err.to_string().contains("foo"), "{err}");
     }
 }
+
+mod refresh_key_tests {
+    use super::*;
+    use dh_channel::keys::PublishedKey;
+    use std::sync::Mutex;
+
+    /// Serves whatever document it currently holds, or fails, and counts calls.
+    struct ChangingFetcher {
+        serving: Arc<Mutex<Result<PublicKeys, &'static str>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl KeyFetcher for ChangingFetcher {
+        fn fetch(&self, _peer: &Peer) -> FetchFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let serving = self.serving.lock().unwrap().clone();
+            Box::pin(
+                async move { serving.map_err(|m| Error::new(ErrorKind::ConnectionRefused, m)) },
+            )
+        }
+    }
+
+    type Serving = Arc<Mutex<Result<PublicKeys, &'static str>>>;
+
+    fn manager_serving(keys: PublicKeys) -> (KeyManager, Serving, Arc<AtomicUsize>) {
+        let serving = Arc::new(Mutex::new(Ok(keys)));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = ChangingFetcher {
+            serving: serving.clone(),
+            calls: calls.clone(),
+        };
+        (
+            KeyManager::with_fetcher(peers(), Box::new(fetcher)),
+            serving,
+            calls,
+        )
+    }
+
+    fn with_foo(ed25519: &str, published: &str) -> PublicKeys {
+        PublicKeys::new(ed25519).with_key("foo", PublishedKey::with_algorithm("RS256", published))
+    }
+
+    #[tokio::test]
+    async fn a_published_key_comes_with_the_cached_document() {
+        let (manager, _, calls) = manager_serving(with_foo("aa", "rsa-1"));
+
+        let first = manager.get_key("foo").await.unwrap();
+        let second = manager.get_key("foo").await.unwrap();
+
+        assert_eq!(first.key("foo").unwrap().public_key, "rsa-1");
+        assert_eq!(second, first);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_fetches_again_and_replaces_the_cached_document() {
+        let (manager, serving, calls) = manager_serving(with_foo("aa", "rsa-1"));
+        manager.get_key("foo").await.unwrap();
+
+        *serving.lock().unwrap() = Ok(with_foo("aa", "rsa-2"));
+        // not refreshed yet: the cached document stands
+        assert_eq!(
+            manager
+                .get_key("foo")
+                .await
+                .unwrap()
+                .key("foo")
+                .unwrap()
+                .public_key,
+            "rsa-1"
+        );
+
+        let refreshed = manager.refresh_key("foo").await.unwrap();
+
+        assert_eq!(refreshed.key("foo").unwrap().public_key, "rsa-2");
+        assert_eq!(manager.get_key("foo").await.unwrap(), refreshed);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn refresh_works_before_anything_was_cached() {
+        let (manager, _, calls) = manager_serving(with_foo("aa", "rsa-1"));
+
+        let keys = manager.refresh_key("foo").await.unwrap();
+
+        assert_eq!(keys.key("foo").unwrap().public_key, "rsa-1");
+        assert_eq!(manager.get_key("foo").await.unwrap(), keys);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_keeps_what_was_cached() {
+        let (manager, serving, _) = manager_serving(with_foo("aa", "rsa-1"));
+        manager.get_key("foo").await.unwrap();
+
+        *serving.lock().unwrap() = Err("peer is down");
+        let err = manager.refresh_key("foo").await.unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::ConnectionRefused);
+        assert_eq!(
+            manager
+                .get_key("foo")
+                .await
+                .unwrap()
+                .key("foo")
+                .unwrap()
+                .public_key,
+            "rsa-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_of_an_unknown_peer_is_not_found_without_fetching() {
+        let (manager, _, calls) = manager_serving(PublicKeys::new("aa"));
+
+        let err = manager.refresh_key("nobody").await.unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn the_shared_key_survives_a_refresh_that_leaves_the_identity_alone() {
+        let (own_pk, own_sk) = generate_keypair_hex();
+        let (peer_pk, _) = generate_keypair_hex();
+        let _ = own_pk;
+        let (manager, serving, calls) = manager_serving(with_foo(&peer_pk, "rsa-1"));
+        let before = manager.get_shared_secret("foo", &own_sk).await.unwrap();
+
+        *serving.lock().unwrap() = Ok(with_foo(&peer_pk, "rsa-2"));
+        manager.refresh_key("foo").await.unwrap();
+        // the peer goes away: a kept shared key needs no fetch
+        *serving.lock().unwrap() = Err("peer is down");
+        let after = manager.get_shared_secret("foo", &own_sk).await.unwrap();
+
+        assert_eq!(after, before);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn the_shared_key_is_derived_again_when_the_identity_changed() {
+        let (_, own_sk) = generate_keypair_hex();
+        let (old_pk, _) = generate_keypair_hex();
+        let (new_pk, _) = generate_keypair_hex();
+        let (manager, serving, _) = manager_serving(PublicKeys::new(old_pk.clone()));
+        let before = manager.get_shared_secret("foo", &own_sk).await.unwrap();
+
+        *serving.lock().unwrap() = Ok(PublicKeys::new(new_pk.clone()));
+        manager.refresh_key("foo").await.unwrap();
+        let after = manager.get_shared_secret("foo", &own_sk).await.unwrap();
+
+        assert_ne!(after, before);
+        assert_eq!(after, compute_shared_secret(&own_sk, &new_pk).unwrap());
+    }
+}
+
+mod http_fetcher_published_keys {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_http_fetcher_reads_other_published_keys() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/keys"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "success",
+                "data": {
+                    "ed25519": { "publicKey": "abcd" },
+                    "foo": { "algorithm": "RS256", "publicKey": "rsa-key" }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let manager = KeyManager::new(vec![Peer::new("bar", server.uri())]);
+
+        let keys = manager.get_key("bar").await.unwrap();
+
+        assert_eq!(keys.ed25519.public_key, "abcd");
+        assert_eq!(keys.key("foo").unwrap().algorithm.as_deref(), Some("RS256"));
+        assert_eq!(keys.key("foo").unwrap().public_key, "rsa-key");
+    }
+}

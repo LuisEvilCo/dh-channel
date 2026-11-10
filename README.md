@@ -70,6 +70,42 @@ The body is `{ "status": "success", "data": { "ed25519": { "publicKey": "<hex>" 
 or a 503 with `{ "status": "error", "data": "<message>" }` when either half of the
 pair is missing.
 
+### Publishing other public keys
+
+A service that signs something its peers verify (tokens, say) can publish
+that public key in the same document, under a name of its choosing:
+
+```rust
+use dh_channel::{public_keys_reply_with, PublishedKey};
+
+let (status, body) = public_keys_reply_with(
+    &config.ed25519_public_key_hex,
+    &config.ed25519_private_key_hex,
+    [("foo", PublishedKey::with_algorithm("RS256", &config.foo_public_key))],
+);
+// "data": { "ed25519": { "publicKey": "<hex>" },
+//           "foo": { "algorithm": "RS256", "publicKey": "<as configured>" } }
+```
+
+A peer reads it from the keys it already fetches for the channel:
+
+```rust
+let keys = key_manager.get_key("bar").await?;          // cached after the first call
+if let Some(key) = keys.key("foo") {
+    // key.algorithm: Option<String>, key.public_key: String
+}
+
+// The publisher may have rotated it: fetch the document again. The shared
+// key of the channel is kept unless the Ed25519 key changed too.
+let keys = key_manager.refresh_key("bar").await?;
+```
+
+Rules: only public keys go in, because the document is served to anyone;
+the name `ed25519` is taken; an entry whose key is empty is not published;
+the 503 body carries none of them; a reader ignores entries it cannot
+read. The encoding of `publicKey` is the publisher's to document.
+`refresh_key` is one request per call, so the caller limits how often.
+
 ## Register peers
 
 ```rust
