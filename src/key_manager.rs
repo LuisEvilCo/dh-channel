@@ -224,6 +224,36 @@ impl KeyManager {
         Ok(keys)
     }
 
+    /// Fetches the peer's `/keys` document again and replaces the cached
+    /// copy, for a consumer that has reason to think a key it reads from
+    /// there changed (a signature that stopped verifying, say).
+    ///
+    /// The cached shared key is dropped only when the peer's Ed25519 key
+    /// changed, so refreshing for another key costs the channel nothing. A
+    /// failed fetch leaves both caches as they were.
+    ///
+    /// Every call is a request to the peer: the caller decides how often.
+    ///
+    /// Fails with [`ErrorKind::NotFound`] for an unregistered peer, otherwise
+    /// with the fetcher's error.
+    pub async fn refresh_key(&self, peer_id: &str) -> Result<PublicKeys, Error> {
+        let peer = self
+            .peers
+            .get(peer_id)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("unknown peer {peer_id}")))?;
+
+        let keys = self.fetcher.fetch(peer).await?;
+        let previous = self
+            .keys_cache
+            .lock()
+            .await
+            .insert(peer_id.to_string(), keys.clone());
+        if previous.is_some_and(|previous| previous.ed25519 != keys.ed25519) {
+            self.secrets_cache.lock().await.remove(peer_id);
+        }
+        Ok(keys)
+    }
+
     /// The shared key with `peer_id`, derived on first use and cached.
     ///
     /// Fails with [`ErrorKind::NotFound`] for an unregistered peer,

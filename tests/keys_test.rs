@@ -105,3 +105,148 @@ fn keys_error_converts_to_io_error() {
     fn takes_error(_: &dyn std::error::Error) {}
     takes_error(&KeysError::MissingPublicKey);
 }
+
+mod published_keys {
+    use super::*;
+    use dh_channel::keys::{ED25519_KEY_NAME, PublishedKey, public_keys_reply_with};
+
+    #[test]
+    fn a_service_without_other_keys_serializes_as_before() {
+        // 0.2 peers and the TypeScript library must see the same document.
+        assert_eq!(
+            serde_json::to_value(PublicKeys::new("abcd")).unwrap(),
+            json!({ "ed25519": { "publicKey": "abcd" } })
+        );
+        let (_, body) = public_keys_reply("pub", "priv");
+        assert_eq!(
+            body,
+            json!({ "status": "success", "data": { "ed25519": { "publicKey": "pub" } } })
+        );
+    }
+
+    #[test]
+    fn other_keys_sit_next_to_ed25519_under_their_names() {
+        let (status, body) = public_keys_reply_with(
+            "pub",
+            "priv",
+            [
+                ("foo", PublishedKey::with_algorithm("RS256", " rsa-key \n")),
+                ("bar", PublishedKey::new("plain-key")),
+            ],
+        );
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            body,
+            json!({
+                "status": "success",
+                "data": {
+                    "ed25519": { "publicKey": "pub" },
+                    "foo": { "algorithm": "RS256", "publicKey": "rsa-key" },
+                    "bar": { "publicKey": "plain-key" }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn the_identity_cannot_be_replaced_and_empty_keys_are_not_published() {
+        let (_, body) = public_keys_reply_with(
+            "pub",
+            "priv",
+            [
+                (ED25519_KEY_NAME, PublishedKey::new("impostor")),
+                ("unset", PublishedKey::with_algorithm("RS256", "   ")),
+                ("  ", PublishedKey::new("nameless")),
+            ],
+        );
+
+        assert_eq!(
+            body,
+            json!({ "status": "success", "data": { "ed25519": { "publicKey": "pub" } } })
+        );
+    }
+
+    #[test]
+    fn the_error_body_carries_no_other_key() {
+        for (public, private) in [("", "priv"), ("pub", "")] {
+            let (status, body) =
+                public_keys_reply_with(public, private, [("foo", PublishedKey::new("rsa-key"))]);
+            assert_eq!(status, 503);
+            assert_eq!(body["status"], "error");
+            assert!(!body.to_string().contains("rsa-key"));
+        }
+    }
+
+    #[test]
+    fn the_private_half_never_reaches_the_document() {
+        let (_, body) = public_keys_reply_with(
+            "pub",
+            "PRIVATE-HALF",
+            [("foo", PublishedKey::with_algorithm("RS256", "rsa-key"))],
+        );
+        assert!(!body.to_string().contains("PRIVATE-HALF"));
+    }
+
+    #[test]
+    fn a_reader_finds_a_published_key_by_name() {
+        let keys = PublicKeys::from_response(json!({
+            "status": "success",
+            "data": {
+                "ed25519": { "publicKey": "abcd" },
+                "foo": { "algorithm": "RS256", "publicKey": "rsa-key" },
+                "bar": { "publicKey": "plain-key" }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(keys.ed25519.public_key, "abcd");
+        assert_eq!(
+            keys.key("foo"),
+            Some(&PublishedKey::with_algorithm("RS256", "rsa-key"))
+        );
+        assert_eq!(keys.key("bar"), Some(&PublishedKey::new("plain-key")));
+        assert_eq!(keys.key("baz"), None);
+        // the identity is not listed among the others
+        assert_eq!(keys.key(ED25519_KEY_NAME), None);
+    }
+
+    #[test]
+    fn a_reader_ignores_entries_that_are_not_published_keys() {
+        // A newer peer may add anything; none of it may make the document
+        // unreadable or show up as a key.
+        let keys = PublicKeys::from_response(json!({
+            "ed25519": { "publicKey": "abcd" },
+            "version": 3,
+            "note": "text",
+            "list": ["a"],
+            "empty": { "publicKey": "  " },
+            "shapeless": { "algorithm": "RS256" },
+            "good": { "publicKey": "kept", "extra": true }
+        }))
+        .unwrap();
+
+        assert_eq!(keys.ed25519.public_key, "abcd");
+        assert_eq!(keys.other.keys().collect::<Vec<_>>(), ["good"]);
+        assert_eq!(keys.key("good").unwrap().public_key, "kept");
+    }
+
+    #[test]
+    fn a_document_survives_a_round_trip() {
+        let keys = PublicKeys::new("abcd")
+            .with_key("foo", PublishedKey::with_algorithm("RS256", "rsa-key"));
+
+        let body = json!({ "status": "success", "data": keys });
+
+        assert_eq!(PublicKeys::from_response(body).unwrap(), keys);
+    }
+
+    #[test]
+    fn other_keys_do_not_excuse_a_missing_identity() {
+        let err = PublicKeys::from_response(json!({
+            "foo": { "algorithm": "RS256", "publicKey": "rsa-key" }
+        }))
+        .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+}

@@ -3,6 +3,26 @@
 All notable changes to this crate. Versions follow semver; `0.x` means the
 API may still change between minor versions.
 
+## 0.3.0 - unreleased
+
+- A service can publish other public keys in its `/keys` document, each
+  under a name next to `ed25519`: `public_keys_reply_with` builds the body,
+  `PublishedKey` (`publicKey` plus an optional `algorithm`) is one entry,
+  and `PublicKeys::key(name)` reads it from a fetched document. The channel
+  still uses only `ed25519`. The name `ed25519` cannot be taken and an
+  entry with an empty key is not published. The 503 body is unchanged.
+- Reading is tolerant: entries next to `ed25519` that are not a published
+  key are ignored instead of failing the document, so a peer on a newer
+  version never breaks one on this version. Documents from 0.2 peers read
+  as before, and 0.2 peers read documents with extra entries (serde ignores
+  unknown fields there).
+- `KeyManager::refresh_key` fetches a peer's document again and replaces
+  the cached copy. The cached shared key is dropped only if the peer's
+  Ed25519 key changed; a failed fetch changes nothing.
+- Breaking, hence the minor bump: `PublicKeys` has a new public field,
+  `other`. Code that builds it with a struct literal or matches it
+  exhaustively needs the field; `PublicKeys::new` is unchanged.
+
 ## 0.2.1 - 2026-11-04
 
 - New feature `client-rustls`: the sender and the default key fetcher built on
