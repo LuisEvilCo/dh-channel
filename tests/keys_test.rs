@@ -222,13 +222,23 @@ mod published_keys {
             "list": ["a"],
             "empty": { "publicKey": "  " },
             "shapeless": { "algorithm": "RS256" },
-            "good": { "publicKey": "kept", "extra": true }
+            "nothing": null,
+            "wrongType": { "publicKey": 42 },
+            "  ": { "publicKey": "nameless" },
+            "good": { "publicKey": " kept ", "algorithm": 7, "extra": true },
+            "named": { "publicKey": "also-kept", "algorithm": " RS256 " }
         }))
         .unwrap();
 
+        // The same document and the same answer as the TypeScript library's
+        // `readPublishedKeys` test.
         assert_eq!(keys.ed25519.public_key, "abcd");
-        assert_eq!(keys.other.keys().collect::<Vec<_>>(), ["good"]);
-        assert_eq!(keys.key("good").unwrap().public_key, "kept");
+        assert_eq!(keys.other.keys().collect::<Vec<_>>(), ["good", "named"]);
+        assert_eq!(keys.key("good"), Some(&PublishedKey::new("kept")));
+        assert_eq!(
+            keys.key("named"),
+            Some(&PublishedKey::with_algorithm("RS256", "also-kept"))
+        );
     }
 
     #[test]

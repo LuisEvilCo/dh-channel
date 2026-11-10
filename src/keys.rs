@@ -74,7 +74,8 @@ impl PublishedKey {
 
 /// Reads the entries next to `ed25519` that are published keys with a
 /// non-empty `publicKey`, and leaves out everything else, so a field this
-/// version does not know never makes a peer's document unreadable.
+/// version does not know never makes a peer's document unreadable. The
+/// TypeScript library reads a document by the same rules.
 fn published_keys_only<'de, D>(deserializer: D) -> Result<BTreeMap<String, PublishedKey>, D::Error>
 where
     D: Deserializer<'de>,
@@ -82,14 +83,29 @@ where
     let entries = BTreeMap::<String, Value>::deserialize(deserializer)?;
     Ok(entries
         .into_iter()
-        .filter(|(name, _)| name != ED25519_KEY_NAME)
-        .filter_map(|(name, value)| {
-            serde_json::from_value::<PublishedKey>(value)
-                .ok()
-                .filter(|key| !key.public_key.trim().is_empty())
-                .map(|key| (name, key))
-        })
+        .filter(|(name, _)| name != ED25519_KEY_NAME && !name.trim().is_empty())
+        .filter_map(|(name, value)| published_key_from(&value).map(|key| (name, key)))
         .collect())
+}
+
+/// One entry of the document as a published key: an object whose
+/// `publicKey` is non-empty text. Values are trimmed. An `algorithm` that
+/// is not non-empty text is dropped, the key is kept.
+fn published_key_from(value: &Value) -> Option<PublishedKey> {
+    let entry = value.as_object()?;
+    let public_key = entry.get("publicKey")?.as_str()?.trim();
+    if public_key.is_empty() {
+        return None;
+    }
+    let algorithm = entry
+        .get("algorithm")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|algorithm| !algorithm.is_empty());
+    Some(PublishedKey {
+        algorithm: algorithm.map(str::to_string),
+        public_key: public_key.to_string(),
+    })
 }
 
 /// Hex-encoded Ed25519 public key.
@@ -117,7 +133,8 @@ impl PublicKeys {
     /// no entry for it instead of an empty one.
     pub fn with_key(mut self, name: impl Into<String>, key: PublishedKey) -> Self {
         let name = name.into();
-        if name != ED25519_KEY_NAME && !name.trim().is_empty() && !key.public_key.is_empty() {
+        if name != ED25519_KEY_NAME && !name.trim().is_empty() && !key.public_key.trim().is_empty()
+        {
             self.other.insert(name, key);
         }
         self
