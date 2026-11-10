@@ -3,7 +3,7 @@
 All notable changes to this crate. Versions follow semver; `0.x` means the
 API may still change between minor versions.
 
-## 0.3.0 - unreleased
+## 0.3.0 - 2026-11-10
 
 - A service can publish other public keys in its `/keys` document, each
   under a name next to `ed25519`: `public_keys_reply_with` builds the body,
